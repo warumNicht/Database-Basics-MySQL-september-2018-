@@ -1,0 +1,230 @@
+CREATE DATABASE instagraph_db;
+USE instagraph_db;
+
+CREATE TABLE pictures(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+path VARCHAR(255) NOT NULL,
+size DECIMAL(10,2) NOT NULL
+);
+CREATE TABLE users(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+username VARCHAR(30) UNIQUE NOT NULL,
+`password` VARCHAR(30) NOT NULL,
+profile_picture_id INT(11) 
+);
+CREATE TABLE posts(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+caption VARCHAR(255)  NOT NULL,
+user_id INT(11) NOT NULL,
+picture_id INT(11) NOT NULL
+);
+CREATE TABLE comments(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+content VARCHAR(255)  NOT NULL,
+user_id INT(11) NOT NULL,
+post_id INT(11) NOT NULL
+);
+CREATE TABLE users_followers(
+user_id INT(11) NOT NULL,
+follower_id INT(11) NOT NULL
+);
+
+ALTER TABLE users_followers
+ADD CONSTRAINT fk_users_user_id
+FOREIGN KEY  users_followers(user_id) REFERENCES users(id),
+ADD CONSTRAINT fk_followers_user_id
+FOREIGN KEY  users_followers(follower_id) REFERENCES users(id);
+
+
+ALTER TABLE comments
+ADD CONSTRAINT fk_comments_user_id
+FOREIGN KEY  comments(user_id) REFERENCES users(id),
+ADD CONSTRAINT fk_comments_post_id
+FOREIGN KEY  comments(post_id) REFERENCES posts(id);
+
+ALTER TABLE posts
+ADD CONSTRAINT fk_posts_user_id
+FOREIGN KEY  posts(user_id) REFERENCES users(id),
+ADD CONSTRAINT fk_posts_picture_id
+FOREIGN KEY  posts(picture_id) REFERENCES pictures(id);
+
+ALTER TABLE users
+ADD CONSTRAINT fk_users_picture_id
+FOREIGN KEY  users(profile_picture_id) REFERENCES pictures(id);
+
+//2
+INSERT INTO comments (content, user_id,post_id)
+SELECT CONCAT('Omg!',u.username, '!This is so cool!') ,CEILING(p.id*3/2),
+p.id 
+FROM posts AS p
+JOIN users AS u ON p.user_id=u.id
+WHERE p.id BETWEEN 1 AND 10;
+
+//3
+UPDATE users AS u
+SET u.profile_picture_id= 
+(SELECT  COUNT(uf.follower_id)
+FROM users_followers AS uf
+WHERE uf.user_id=5
+GROUP BY uf.user_id)
+WHERE  ISNULL(u.profile_picture_id);
+
+UPDATE users AS u
+SET u.profile_picture_id= u.id
+WHERE  u.profile_picture_id=0;
+
+//4
+DELETE FROM users 
+WHERE id=(SELECT * FROM(SELECT u.id
+FROM users AS u
+LEFT JOIN users_followers AS uf ON u.id=uf.user_id
+WHERE u.id NOT IN(SELECT f.follower_id FROM users_followers AS f)
+GROUP BY u.id ) AS t);
+
+//5
+SELECT u.id,u.username
+FROM users AS u
+ORDER BY u.id;
+
+//6
+SELECT u.id,u.username
+FROM users AS u
+JOIN users_followers AS uf ON uf.user_id=u.id
+WHERE u.id=uf.follower_id
+GROUP BY u.id
+ORDER BY u.id;
+
+//7
+SELECT p.id,p.path,p.size
+FROM pictures AS p
+WHERE p.size>50000 AND (p.path LIKE '%jpeg%' OR p.path LIKE '%png%' )
+ORDER BY p.size DESC;
+
+//8
+SELECT c.id, CONCAT(u.username, ' : ',c.content) AS full_comment
+FROM comments AS c
+JOIN users AS u ON c.user_id=u.id
+ORDER BY c.id DESC;
+
+//9
+SELECT u.id,u.username, CONCAT(p.size,'KB') AS size
+FROM users AS u
+JOIN users AS u2 ON u.profile_picture_id=u2.profile_picture_id
+JOIN pictures AS p ON p.id=u.profile_picture_id
+WHERE u.id!=u2.id
+GROUP BY u.id;
+
+//10
+SELECT p.id,p.caption,
+
+IF( 
+ISNULL( (SELECT COUNT(c.id)
+FROM comments AS c
+WHERE  c.post_id=p.id
+GROUP BY c.post_id)) ,0 ,(SELECT COUNT(c.id)
+FROM comments AS c
+WHERE  c.post_id=p.id
+GROUP BY c.post_id)) AS `count`
+
+FROM posts AS p;
+
+//11
+SELECT u.id,u.username,(SELECT COUNT(p.id)
+FROM users AS u2
+LEFT JOIN posts AS p ON u2.id=p.user_id
+WHERE u.id=u2.id
+GROUP BY u.id) AS `posts`,
+
+(SELECT COUNT(uf.follower_id)
+FROM users AS u3 
+LEFT JOIN users_followers AS uf ON u3.id=uf.user_id
+WHERE u.id=u3.id
+GROUP BY u3.id) AS followers
+
+FROM users AS u
+ORDER BY followers DESC
+LIMIT 1;
+
+ORDER BY `count` DESC, p.id LIMIT 5;
+
+//12
+SELECT u2.id,u2.username, IF(ISNULL(
+(SELECT COUNT(c.post_id) AS my
+FROM users AS u
+LEFT JOIN posts AS p ON p.user_id=u.id
+LEFT JOIN comments AS c ON c.post_id=p.id
+WHERE c.user_id=p.user_id AND c.user_id=u2.id
+GROUP BY p.user_id
+ORDER BY my DESC,u.id)
+)
+,0,(SELECT COUNT(c.post_id) AS my
+FROM users AS u
+LEFT JOIN posts AS p ON p.user_id=u.id
+LEFT JOIN comments AS c ON c.post_id=p.id
+WHERE c.user_id=p.user_id AND c.user_id=u2.id
+GROUP BY p.user_id
+ORDER BY my DESC,u.id) ) AS my_comments
+FROM users AS u2
+ORDER BY my_comments DESC,u2.id;
+
+//13
+SELECT u.id,u.username, 
+( SELECT p2.caption
+FROM posts AS p2
+ORDER BY (SELECT COUNT(c.id)
+FROM posts AS p
+LEFT JOIN comments AS c ON p.id=c.post_id
+WHERE p.id=p2.id AND p.user_id=u.id
+GROUP BY p2.id)
+DESC, p2.id LIMIT 1)
+
+FROM users AS u
+JOIN posts AS p ON u.id=p.user_id
+GROUP BY u.id;
+
+//14
+SELECT p.id,p.caption,COUNT(DISTINCT(c.user_id)) AS `users`
+FROM posts AS p
+LEFT JOIN comments AS c ON p.id=c.post_id
+GROUP BY p.id
+ORDER BY `users` DESC, p.id;
+
+//15 грешка в джъдж???
+DELIMITER $$
+CREATE PROCEDURE udp_post(
+username VARCHAR(30), 
+`password` VARCHAR(30),
+caption VARCHAR(255),
+path VARCHAR(255) )
+BEGIN
+
+  IF NOT  (SELECT u.`password` FROM users AS u WHERE u.username=username)
+   	= `password` 
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Password is incorrect!';
+    END IF;
+    
+     IF NOT EXISTS (SELECT p.path FROM pictures AS p WHERE p.path=path)
+   
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The picture does not exist!';
+    END IF;
+
+		INSERT INTO posts (caption, user_id,picture_id)
+		SELECT caption ,(SELECT u.id FROM users AS u WHERE u.username=username),
+		(SELECT p.id FROM pictures AS p WHERE p.path=path);
+
+END $$
+
+//16
+CREATE PROCEDURE udp_filter(hashtag VARCHAR(255))
+BEGIN
+SELECT p.id,p.caption,u.username
+FROM posts AS p
+JOIN users AS u ON p.user_id=u.id
+WHERE p.caption LIKE CONCAT('%#',hashtag,'%')
+ORDER BY p.id;
+
+END

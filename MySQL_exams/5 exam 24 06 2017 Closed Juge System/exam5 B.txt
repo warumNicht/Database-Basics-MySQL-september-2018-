@@ -1,0 +1,263 @@
+//1
+CREATE TABLE users(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+username VARCHAR(30) UNIQUE NOT NULL,
+`password` VARCHAR(30) NOT NULL,
+email VARCHAR(50)
+);
+
+CREATE TABLE categories(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+`name` VARCHAR(50) NOT NULL,
+parent_id INT(11),
+CONSTRAINT fk_category_parent_id
+FOREIGN KEY (parent_id) REFERENCES categories (id)
+);
+
+CREATE TABLE contests(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+`name` VARCHAR(50) NOT NULL,
+category_id INT(11) NOT NULL,
+CONSTRAINT fk_contest_category_id
+FOREIGN KEY (category_id) REFERENCES categories (id)
+);
+
+CREATE TABLE problems(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+`name` VARCHAR(100) NOT NULL,
+points INT(11) NOT NULL,
+tests INT(11) NOT NULL DEFAULT 0,
+contest_id INT(11) NOT NULL,
+CONSTRAINT fk_problem_contest_id
+FOREIGN KEY (contest_id) REFERENCES contests (id)
+);
+
+CREATE TABLE submissions(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+passed_tests INT(11) NOT NULL,
+problem_id INT(11) NOT NULL,
+user_id INT(11) NOT NULL,
+CONSTRAINT fk_submission_problem_id
+FOREIGN KEY (problem_id) REFERENCES problems (id),
+CONSTRAINT fk_submission_user_id
+FOREIGN KEY (user_id) REFERENCES users (id)
+);
+
+CREATE TABLE users_contests(
+user_id INT(11) NOT NULL,
+contest_id INT(11) NOT NULL,
+CONSTRAINT pk_uc
+PRIMARY KEY (user_id ,contest_id),
+CONSTRAINT fk_uc_user_id
+FOREIGN KEY (user_id) REFERENCES users (id),
+CONSTRAINT fk_uc_contest_id
+FOREIGN KEY (contest_id) REFERENCES contests (id)
+);
+
+//2
+INSERT INTO submissions(passed_tests,problem_id,user_id)
+(SELECT CEIL(SQRT(POW(CHAR_LENGTH(p.name),3))-CHAR_LENGTH(p.name)),p.id,
+CEIL(p.id*3/2)
+FROM problems AS p
+WHERE p.id BETWEEN 1 AND 10);
+
+//3
+UPDATE problems AS p
+JOIN contests AS c ON p.contest_id=c.id
+JOIN categories AS cat ON c.category_id=cat.id
+JOIN submissions AS s ON p.id=s.problem_id
+
+SET tests =
+CASE
+WHEN p.id%3=0 THEN CHAR_LENGTH(cat.name)
+WHEN p.id%3=1 THEN (SELECT  SUM(s.id)
+FROM submissions AS s 
+WHERE s.problem_id=p.id)
+WHEN p.id%3=2 THEN CHAR_LENGTH(c.name)
+END
+WHERE p.tests=0;
+
+//4
+DELETE FROM submissions 
+WHERE user_id IN(SELECT u.id
+FROM users AS u
+WHERE u.id NOT IN (SELECT uc.user_id FROM users_contests AS uc));
+
+DELETE FROM users
+WHERE id IN (SELECT * FROM(SELECT u.id
+FROM users AS u
+WHERE u.id NOT IN (SELECT uc.user_id FROM users_contests AS uc)) AS w);
+
+//5
+SELECT u.id,u.username,u.email
+FROM users AS u
+ORDER BY u.id;
+
+//6
+SELECT c.id,c.name
+FROM categories AS c
+WHERE ISNULL(c.parent_id);
+
+//7
+SELECT p.id,p.name,p.tests
+FROM problems AS p
+WHERE p.tests>p.points AND p.name LIKE '% %'
+ORDER BY p.id DESC;
+
+//8
+SELECT p.id,CONCAT_WS(' - ',cat.name,c.name,p.name)
+FROM problems AS p
+JOIN contests AS c ON p.contest_id=c.id
+JOIN categories AS cat ON c.category_id=cat.id
+GROUP BY p.id
+ORDER BY p.id ;
+
+//9
+SELECT c.id,c.name
+FROM  categories AS c
+WHERE c.id NOT IN(SELECT DISTINCT(c.parent_id)
+FROM  categories AS c
+WHERE  NOT ISNULL(c.parent_id))
+ORDER BY c.name,c.id;
+
+//10
+SELECT u.id,u.username,u.password
+FROM  users AS u
+JOIN users AS u2 ON u.password=u2.password
+WHERE u.id != u2.id
+GROUP BY u.id
+ORDER BY u.username,u.id;
+
+//11
+SELECT * FROM (SELECT c.id,c.name, COUNT(uc.user_id) AS contestants
+FROM  contests AS c
+LEFT JOIN users_contests AS uc ON c.id=uc.contest_id
+GROUP BY c.id
+ORDER BY  contestants DESC,c.id LIMIT 5) AS w
+ORDER BY w.contestants ,w.id;
+
+//12
+SELECT s.id,
+(SELECT u.username
+FROM users AS u
+JOIN users_contests AS uc ON u.id=uc.user_id
+GROUP BY u.id
+ORDER BY COUNT(uc.contest_id) DESC
+LIMIT 1)
+, p.name,CONCAT_WS(' / ',s.passed_tests,p.tests)
+FROM  submissions AS s
+JOIN problems AS p ON s.problem_id=p.id
+WHERE s.user_id=(SELECT u.id
+FROM users AS u
+JOIN users_contests AS uc ON u.id=uc.user_id
+GROUP BY u.id
+ORDER BY COUNT(uc.contest_id) DESC
+LIMIT 1)
+ORDER BY s.id DESC;
+
+//13
+SELECT c.id,c.name, IFNULL(SUM(p.points),0) AS points
+FROM contests AS c
+JOIN problems AS p ON c.id=p.contest_id
+GROUP BY c.id
+ORDER BY points DESC, c.id;
+
+//14
+SELECT c.id,c.name,COUNT(s.id) AS con
+FROM contests AS c
+JOIN problems AS p ON c.id=p.contest_id
+JOIN submissions AS s ON p.id=s.problem_id
+JOIN users_contests AS uc ON c.id=uc.contest_id
+WHERE s.user_id=uc.user_id
+GROUP BY c.id
+ORDER BY con DESC, c.id;
+
+//15
+
+DROP PROCEDURE  IF EXISTS udp_login;
+DELIMITER $$
+CREATE PROCEDURE udp_login (username VARCHAR(30), `password` VARCHAR(30)) 
+BEGIN
+
+DECLARE user_id INT DEFAULT 0;
+DECLARE user_email VARCHAR(50) DEFAULT '';
+ 
+ 		 IF NOT EXISTS (SELECT u.id FROM users AS u WHERE u.username=username)   
+     	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Username does not exist!';   
+    END IF;   
+    
+    		 IF NOT EXISTS (SELECT u.id FROM users AS u WHERE u.password=`password`)    
+     	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Password is incorrect!';  
+    END IF; 
+    
+     		 IF EXISTS (SELECT u.id FROM logged_in_users AS u WHERE u.username=username)   
+     	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'User is already logged in!';   
+    END IF; 
+    
+    SET user_id =(SELECT u.id FROM users AS u WHERE u.username=username);
+    SET user_email=(SELECT u.email FROM users AS u WHERE u.username=username);
+    
+    INSERT INTO logged_in_users (id,username,password,email)
+    SELECT user_id,username,password,user_email;
+   
+END $$
+
+//16
+
+DROP PROCEDURE  IF EXISTS udp_evaluate ;
+DELIMITER $$
+CREATE PROCEDURE udp_evaluate  (sub_id INT(11)) 
+BEGIN
+ 
+ 		 IF NOT EXISTS (SELECT s.id FROM submissions AS s WHERE s.id=sub_id)   
+     	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Submission does not exist!';   
+    END IF;   
+
+    
+    INSERT INTO evaluated_submissions  (id,problem, user,result)
+     (SELECT s.id,p.name,u.username, IFNULL(CEIL(p.points/p.tests*s.passed_tests),0)
+FROM submissions AS s
+JOIN problems AS p ON s.problem_id=p.id
+JOIN users AS u ON s.user_id=u.id
+WHERE s.id=sub_id);
+    
+END $$
+
+//17
+DROP TRIGGER IF EXISTS trig ;
+
+DELIMITER $$
+CREATE TRIGGER trig 
+BEFORE INSERT 
+ON problems 
+FOR EACH ROW 
+BEGIN
+
+IF NEW.name NOT LIKE '% %' 
+ 	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The given name is invalid!';   
+    END IF; 
+    
+    IF NEW.points<=0
+ 	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The problem’s points cannot be less or equal to 0!';   
+    END IF; 
+    
+        IF NEW.tests <=0
+ 	THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The problem’s tests cannot be less or equal to 0!';   
+    END IF;
+
+END  $$
+

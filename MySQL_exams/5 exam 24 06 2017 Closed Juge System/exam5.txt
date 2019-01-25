@@ -1,0 +1,235 @@
+CREATE TABLE users(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+username VARCHAR(30) NOT NULL UNIQUE,
+`password` VARCHAR(30) NOT NULL,
+email VARCHAR(50)
+);
+
+CREATE TABLE categories(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+parent_id INT(11)
+);
+
+CREATE TABLE contests(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+name VARCHAR(50) NOT NULL,
+category_id INT(11) NOT NULL
+);
+
+CREATE TABLE problems(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+name VARCHAR(100) NOT NULL,
+points INT(11) NOT NULL,
+tests INT(11) NOT NULL DEFAULT 0,
+contest_id INT(11) NOT NULL
+);
+
+CREATE TABLE submissions(
+id INT(11) PRIMARY KEY AUTO_INCREMENT,
+passed_tests INT(11) NOT NULL,
+problem_id INT(11) NOT NULL,
+user_id INT(11) NOT NULL
+);
+
+CREATE TABLE users_contests(
+user_id INT(11) ,
+contest_id INT(11) 
+);
+
+ALTER TABLE submissions
+ADD CONSTRAINT submission_user_id
+FOREIGN KEY submissions(user_id) REFERENCES users(id),
+ADD CONSTRAINT submission_problem_id
+FOREIGN KEY submissions(problem_id) REFERENCES problems(id);
+
+ALTER TABLE users_contests
+ADD CONSTRAINT users_contests_keys
+PRIMARY KEY users_contests(user_id,contest_id);
+
+ALTER TABLE users_contests
+ADD CONSTRAINT uc_user_id
+FOREIGN KEY users_contests(user_id) REFERENCES users(id),
+ADD CONSTRAINT uc_contest_id
+FOREIGN KEY users_contests(contest_id) REFERENCES contests(id);
+
+ALTER TABLE contests
+ADD CONSTRAINT contest_category_id
+FOREIGN KEY contests(category_id) REFERENCES categories(id);
+
+ALTER TABLE categories
+ADD CONSTRAINT category_parent_id
+FOREIGN KEY categories(parent_id) REFERENCES categories(id);
+
+ALTER TABLE problems
+ADD CONSTRAINT problem_contest_id
+FOREIGN KEY problems(contest_id) REFERENCES contests(id);
+
+//2
+INSERT INTO submissions(passed_tests,problem_id,user_id)
+SELECT ceiling(SQRT( pow( char_length(p.name),3) )  - char_length(p.name) ),p.id, ceiling(p.id*3/2 )
+FROM problems AS p
+WHERE p.id BETWEEN 0 AND 10;
+
+//3
+UPDATE problems AS p
+JOIN contests AS c ON contest_id=c.id
+JOIN categories AS cat ON c.category_id=cat.id
+SET p.tests= if(p.id%3=0, char_length(cat.name),if(p.id%3=1,
+(SELECT SUM(sub.id)
+FROM (SELECT * FROM problems) AS p2 
+JOIN submissions AS sub ON sub.problem_id=p2.id
+WHERE p2.id=p.id
+GROUP BY p2.id
+), char_length(c.name)) ) 
+WHERE p.tests=0;
+
+//4
+DELETE FROM submissions
+WHERE user_id=(SELECT id FROM users 
+WHERE id NOT IN(SELECT uc.user_id
+FROM users_contests AS uc) 
+);
+
+DELETE FROM users 
+WHERE id NOT IN(SELECT uc.user_id
+FROM users_contests AS uc) 
+;
+
+//5
+SELECT u.id,u.username,u.email
+FROM users AS u;
+
+//6
+SELECT c.id,c.name FROM categories AS c
+WHERE isnull(c.parent_id);
+
+//7
+SELECT p.id,p.name,p.tests FROM problems AS p
+WHERE p.tests>p.points AND p.name LIKE '% %'
+ORDER BY p.id DESC;
+
+//8
+SELECT p.id, CONCAT(cat.name,' - ',c.name, ' - ',p.name)
+FROM problems AS p
+JOIN contests AS c ON p.contest_id=c.id
+JOIN categories AS cat ON c.category_id=cat.id
+ORDER BY p.id;
+
+//9
+SELECT c.id,c.name FROM categories AS c
+WHERE c.id NOT IN (SELECT c2.parent_id FROM categories AS c2
+WHERE (c2.parent_id) IS  NOT NULL)
+ORDER BY c.name,c.id;
+
+//10
+SELECT u.id,u.username,u.password 
+FROM users AS u
+
+JOIN users AS u2 ON u.password LIKE u2.password AND u.id!=u2.id
+
+GROUP BY u.id
+
+ORDER BY u.username,u.id;
+
+//11
+SELECT c2.id,c2.name,(SELECT COUNT(uc.contest_id) AS contestants FROM contests AS c
+LEFT JOIN users_contests AS uc ON c.id=uc.contest_id
+WHERE  c.id=c2.id
+GROUP BY c.id
+) AS contestants
+FROM contests AS c2
+WHERE c2.id IN(SELECT * FROM(SELECT c.id FROM contests AS c
+LEFT JOIN users_contests AS uc ON c.id=uc.contest_id
+GROUP BY c.id
+ORDER BY COUNT(uc.contest_id) DESC LIMIT 5) AS s)
+ORDER BY contestants, c2.id LIMIT 5;
+
+//12
+SELECT s.id,u.username,p.name, CONCAT(s.passed_tests,' / ',p.tests)
+FROM submissions AS s
+JOIN users AS u ON u.id=s.user_id
+JOIN problems AS p ON s.problem_id=p.id
+WHERE s.user_id=(SELECT uc.user_id
+FROM users_contests AS uc
+GROUP BY uc.user_id
+ORDER BY COUNT(uc.user_id) DESC LIMIT 1)
+ORDER BY s.id DESC;
+
+//13
+SELECT c.id,c.name,IFNULL(SUM(p.points), 0) AS maximum_points
+FROM contests AS c
+LEFT JOIN problems AS p ON p.contest_id=c.id
+GROUP BY c.id
+HAVING maximum_points>0
+ORDER BY maximum_points DESC, c.id;
+
+//14
+SELECT c.id,c.name,COUNT(sub.id) AS subm
+FROM contests AS c
+JOIN users_contests AS uc ON uc.contest_id=c.id
+JOIN users AS u ON uc.user_id=u.id
+JOIN submissions AS sub ON sub.user_id=u.id
+JOIN problems AS p ON sub.problem_id=p.id
+WHERE p.contest_id=c.id
+GROUP BY c.id
+ORDER BY subm DESC, c.id;
+
+//15
+DELIMITER $$
+CREATE PROCEDURE udp_login(username VARCHAR(30), `password` VARCHAR(30))
+BEGIN
+
+  IF NOT EXISTS (SELECT u.id FROM users AS u WHERE u.username=username)  
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Username does not exist!';
+    END IF;
+    
+      IF NOT EXISTS (SELECT u.id FROM users AS u WHERE u.password=`password`)  
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Password is incorrect!';
+    END IF;
+    
+  IF  EXISTS (SELECT u.id FROM logged_in_users AS u WHERE u.username=username)  
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'User is already logged in!';
+    END IF;
+    
+    INSERT INTO logged_in_users(id, username,`password`,email)
+		SELECT (SELECT u.id FROM users AS u WHERE u.username=username),username,`password`, (SELECT u.email FROM users AS u WHERE u.username=username);
+    
+
+END $$
+
+//17
+CREATE TRIGGER trig 
+
+BEFORE INSERT
+ON problems
+FOR EACH ROW 
+
+BEGIN
+
+  IF NEW.name NOT LIKE '% %'
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The given name is invalid!';
+    END IF;
+    
+      IF NEW.points<=0
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The problem’s points cannot be less or equal to 0!';
+    END IF;
+    
+        IF NEW.tests<=0
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The problem’s tests cannot be less or equal to 0!';
+    END IF;
+ 
+    
+END $$

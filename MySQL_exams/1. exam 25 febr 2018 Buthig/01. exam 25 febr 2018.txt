@@ -1,0 +1,211 @@
+01.	Table Design
+
+CREATE TABLE users(
+`id` INT(11) PRIMARY KEY AUTO_INCREMENT,
+`username` VARCHAR(30) UNIQUE NOT NULL,
+`password` VARCHAR(30) NOT NULL,
+`email` VARCHAR(50) NOT NULL
+);
+CREATE TABLE repositories(
+`id` INT(11) PRIMARY KEY AUTO_INCREMENT,
+`name` VARCHAR(50)  NOT NULL
+);
+CREATE TABLE repositories_contributors(
+`repository_id` INT(11) NOT NULL,
+`contributor_id` INT(11) NOT NULL 
+);
+CREATE TABLE issues(
+`id` INT(11) PRIMARY KEY AUTO_INCREMENT,
+`title` VARCHAR(255) NOT NULL,
+`issue_status` VARCHAR(6) NOT NULL,
+`repository_id` INT(11) NOT NULL,
+`assignee_id` INT(11) NOT NULL
+);
+CREATE TABLE commits(
+`id` INT(11) PRIMARY KEY AUTO_INCREMENT,
+`message` VARCHAR(255) NOT NULL,
+`issue_id` INT(11) ,
+`repository_id` INT(11) NOT NULL,
+`contributor_id` INT(11) NOT NULL
+);
+CREATE TABLE files(
+`id` INT(11) PRIMARY KEY AUTO_INCREMENT,
+`name` VARCHAR(100) NOT NULL,
+`size` DECIMAL(10,2) NOT NULL ,
+`parent_id` INT(11),
+`commit_id` INT(11) NOT NULL
+);
+
+ALTER TABLE repositories_contributors
+ADD CONSTRAINT fk_contibutor_user_id
+FOREIGN KEY repositories_contributors(contributor_id) REFERENCES users(`id`),
+ADD CONSTRAINT fk_reposiroty_repo_id
+FOREIGN KEY repositories_contributors(repository_id) REFERENCES repositories(`id`);
+
+ALTER TABLE issues
+ADD CONSTRAINT fk_issue_user_id
+FOREIGN KEY issues(assignee_id) REFERENCES users(`id`),
+ADD CONSTRAINT fk_issue_repo_id
+FOREIGN KEY issues(repository_id) REFERENCES repositories(`id`);
+
+ALTER TABLE commits
+ADD CONSTRAINT fk_commits_user_id
+FOREIGN KEY commits(contributor_id) REFERENCES users(`id`),
+ADD CONSTRAINT fk_commits_repo_id
+FOREIGN KEY commits(repository_id) REFERENCES repositories(`id`),
+ADD CONSTRAINT fk_commits_issue_id
+FOREIGN KEY commits(issue_id) REFERENCES issues(`id`);
+
+ALTER TABLE files
+ADD CONSTRAINT fk_files_commit_id
+FOREIGN KEY files(commit_id) REFERENCES commits(`id`),
+ADD CONSTRAINT fk_files_parent_id
+FOREIGN KEY files(parent_id) REFERENCES files(`id`);
+
+02.	Data Insertion
+INSERT INTO issues (title,issue_status,repository_id,assignee_id)
+SELECT CONCAT('Critical Problem With ',f.name,'!') AS title,
+'open' AS issue_status, CEILING(f.id*2/3) AS repository_id,c.contributor_id  AS assignee_id
+FROM files AS f
+JOIN commits AS c ON f.commit_id=c.id
+WHERE f.id >=46 AND f.id<=50;
+
+
+03.	Data Update
+UPDATE repositories_contributors  AS rc
+SET rc.repository_id=  
+
+(SELECT rep.id
+FROM repositories AS rep
+WHERE rep.id NOT IN(SELECT repository_id 
+FROM ( SELECT repository_id FROM repositories_contributors ) AS a)
+ORDER BY  rep.id LIMIT 1) 
+
+WHERE rc.repository_id=rc.contributor_id ;
+
+04.	Data Deletion
+DELETE FROM repositories 
+WHERE id NOT IN(SELECT i.repository_id FROM issues AS i);
+
+05.	Users
+SELECT u.id,u.username
+FROM users AS u
+ORDER BY u.id;
+
+06.	Lucky Numbers
+SELECT r.repository_id,r.contributor_id
+FROM repositories_contributors AS r
+WHERE r.repository_id=r.contributor_id 
+ORDER BY r.repository_id;
+
+07.	Heavy HTML
+SELECT f.id,f.name,f.size
+FROM files AS f
+WHERE f.size>1000 AND f.name LIKE '%html'
+ORDER BY f.size DESC;
+
+08.	Issues and Users
+SELECT i.id, CONCAT(u.username, ' : ',i.title) AS issue_assignee
+FROM issues AS i
+JOIN users AS u ON i.assignee_id=u.id
+ORDER BY i.id DESC;
+
+09.	Non-Directory Files
+SELECT f.id,f.name,CONCAT(f.size,'KB') AS size
+FROM files AS f
+WHERE f.id NOT IN(SELECT u.parent_id FROM files AS u  WHERE u.parent_id IS NOT NULL)
+
+10.	Active Repositories
+SELECT r.id,r.name, COUNT(i.id) AS `issues`
+FROM repositories AS r
+JOIN issues AS i ON r.id=i.repository_id
+GROUP BY r.id
+ORDER BY `issues` DESC,r.id 
+LIMIT 5;
+ORDER BY f.id;
+
+11.	Most Contributed Repository
+SELECT r.id,r.name,(SELECT COUNT(c.repository_id)
+FROM repositories AS r2
+JOIN commits AS c ON r2.id=c.repository_id
+WHERE r.id=r2.id) AS commits,
+(SELECT COUNT(rc.contributor_id)
+FROM repositories AS r3
+JOIN repositories_contributors AS rc ON rc.repository_id=r3.id
+WHERE r3.id=r.id
+) AS contributors
+FROM repositories AS r
+ORDER BY contributors DESC ,r.id LIMIT 1;
+
+12.	Fixing My Own Problems
+SELECT u.id,u.username,(SELECT  COUNT(c.id)
+
+FROM commits AS c 
+JOIN issues As i ON i.id=c.issue_id
+WHERE i.assignee_id=u.id AND c.contributor_id=u.id) AS `commit`
+FROM users AS u
+
+ORDER BY `commit` DESC,u.id;
+
+13.	Recursive Commits
+SELECT SUBSTRING(f.name,1,  POSITION('.' IN f.name)-1 ) AS `file`,
+(SELECT COUNT(c.id)
+FROM commits AS c
+WHERE c.message LIKE CONCAT('%',f.name,'%')) AS recursive_count
+FROM files AS f
+JOIN files AS f2 ON f.id=f2.parent_id AND f.parent_id=f2.id AND f.id!=f.parent_id
+ORDER BY f.name
+
+14.	Repositories and Commits
+SELECT r.id,r.name, COUNT(DISTINCT(u.id)) AS `users`
+FROM repositories AS r
+LEFT JOIN commits AS c ON c.repository_id=r.id
+LEFT JOIN users AS u ON u.id=c.contributor_id
+GROUP BY r.id
+ORDER BY `users` DESC,r.id;
+
+
+15.	Commit
+DROP PROCEDURE IF EXISTS udp_commit;
+DELIMITER $$
+
+CREATE PROCEDURE udp_commit(username VARCHAR(30), `password` VARCHAR(30),
+message VARCHAR(255), issue_id INT(11))
+BEGIN
+   
+    IF NOT EXISTS (SELECT u.id FROM users AS u WHERE u.username=username)
+    THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'No such user!';
+    END IF;
+    
+    IF NOT (SELECT u.`password` FROM users AS u WHERE u.username=username)
+   	= `password` 
+     THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Password is incorrect!';
+    END IF;
+    
+      IF NOT EXISTS (SELECT i.id FROM issues AS i WHERE i.id=issue_id)
+    THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The issue does not exist!';
+    END IF;
+    
+    INSERT INTO commits (message, issue_id, repository_id, contributor_id)
+    SELECT message, issue_id, i.repository_id,u.id FROM issues AS i, users AS u
+	 WHERE i.id=issue_id AND u.username=username;
+    
+END $$
+
+//CALL udp_commit('BlaAntigadsa', ':Q5wjT4[e','Wer ist dabei?', 4);
+
+
+16.	Filter Extensions
+DELIMITER $$
+CREATE PROCEDURE udp_findbyextension (extension VARCHAR(20))
+BEGIN
+SELECT f.id,f.name AS caption, CONCAT(f.size,'KB') AS user
+FROM files AS f
+WHERE f.name LIKE CONCAT('%.',extension);
+END $$
